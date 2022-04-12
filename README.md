@@ -77,5 +77,102 @@ Once authenticated, Salesforce redirects you to the Redirect URL specified with 
 
 Note that the code is URL encoded and must be decoded. The script above also decodes the URL, so the entire code needs to be copied and pasted into the prompt. Next, the script creates a new secret with the access token and refresh token. After this, the CDK/Cloudformation code can be automatically deployed. Note that the above steps need to run exactly once before deploying the cloudformation stack.
 
+### Step 3: Cloudformation/CDK
+At this point, we have two secrets registered in AWS Secrets Manager:
+1. The Client Credentials: (`clientId`, `clientSecret`)
+2. Tokens: (`accessToken`, `refreshToken`)
 
+The code below uses Python-flavoured AWS CDK, but the same ideas translate trivially to Cloudformation as well. 
 
+Create an encryption key for AppFlow and allow the AppFlow service principal to use it
+```Python
+appflow_encyption_key_policy = iam.PolicyDocument(
+        statements=[
+            iam.PolicyStatement(
+                principals=[iam.ServicePrincipal("appflow.amazonaws.com")],
+                actions=["kms:Encrypt", "kms:Decrypt", "kms:GenerateDataKey"],
+                resources=["*"],
+                conditions={
+                    "StringEquals": {"aws:SourceAccount": self.account},
+                    "ArnLike": {"aws:SourceArn": f"arn:aws:appflow:{self.region}:{self.account}:*"}
+                }
+            ),
+            iam.PolicyStatement(
+                principals=[iam.AccountRootPrincipal()],
+                actions=["kms:*"],
+                resources=["*"]
+            )
+        ]
+    )
+appflow_encryption_key = kms.Key(
+    self, 
+    "appflow-encryption-key",
+    alias="appflow-sf-encryption-key",
+    description="KMS key used by Appflow to encrypt Salesforce data",
+    policy=appflow_encyption_key_policy
+)
+```
+
+The [`SalesforceConnectorProfileCredentials`](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-properties-appflow-connectorprofile-salesforceconnectorprofilecredentials.html) property needs to be configured with the `AccessToken`, `RefreshToken` and `ClientCredentialsArn` properties. 
+
+The `ClientCredentialsArn` is the ARN of a Secrets Manager secret containing the `clientId` and `clientSecret` properties. However, AppFlow needs the secret to be encrypted with the same key as the one above. Thus we cannot use the secret created earlier. As a result, we need to create a new secret encrypted with the `appflow_encryption_key`created above.
+
+```Python
+salesforce_client_credentials_arn = "<client-credential-secret-arn>"
+salesforce_client_credentials_secret_managed_key = sm.Secret.from_secret_attributes(
+    self, 
+    "salesforce-client-credentials-managed-key",
+    secret_complete_arn=salesforce_client_credentials_arn
+)
+salesforce_client_credentials = sm.Secret(
+    self, 
+    "salesforce-client-credentials",
+    encryption_key=appflow_encryption_key,
+    secret_string_beta1=sm.SecretStringValueBeta1.from_token(
+        salesforce_client_credentials_secret_managed_key.secret_value.to_string()
+    )
+)
+salesforce_client_credentials.add_to_resource_policy(
+    iam.PolicyStatement(
+        principals=[iam.ServicePrincipal("appflow.amazonaws.com")],
+        actions=["secretsmanager:GetSecretValue"],
+        resources=["*"]
+    )
+)
+```
+
+Now, we can specify the credentials fully by reading the `AccessToken` and `RefreshToken` from the secret created by the PowerShell script above:
+
+```Python
+salesforce_token_secret_arn = "<salesforce-token-secret-arn>" 
+salesforce_tokens = sm.Secret.from_secret_attributes(
+    self, 
+    "salesforce_tokens",
+    secret_complete_arn=salesforce_token_secret_arn
+)
+salesforce_connector_profile = appflow.CfnConnectorProfile(
+    self,
+    "salesforce-connector-profile",
+    connection_mode="Public",
+    connector_profile_name="salesforce-connection-profile",
+    connector_type="Salesforce",
+    connector_profile_config=appflow.CfnConnectorProfile.ConnectorProfileConfigProperty(
+        connector_profile_credentials=appflow.CfnConnectorProfile.ConnectorProfileCredentialsProperty(
+            salesforce=appflow.CfnConnectorProfile.SalesforceConnectorProfileCredentialsProperty(
+                access_token=salesforce_tokens.secret_value_from_json("accessToken").to_string(),
+                refresh_token=salesforce_tokens.secret_value_from_json("refreshToken").to_string(),
+                client_credentials_arn=salesforce_client_credentials.secret_full_arn
+            )
+        ),
+        connector_profile_properties=appflow.CfnConnectorProfile.ConnectorProfilePropertiesProperty(
+            salesforce=appflow.CfnConnectorProfile.SalesforceConnectorProfilePropertiesProperty(
+                instance_url="https://<your-domain>.my.salesforce.com",
+                is_sandbox_environment=False
+            )
+        )
+    ),
+    kms_arn=appflow_encryption_key.key_arn
+)
+```
+
+To test this, create a flow which uses the Connector created above. 
