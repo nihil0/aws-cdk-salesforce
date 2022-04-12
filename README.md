@@ -1,5 +1,5 @@
 ## Problem statement
-AWS AppFlow supports the ability to create a connection profile from the Management Console using a point-and-click approach. However, this approach does not translate well into the world of automated deployments where developers rarely have the ability to even log into the management console of the production environment, let alone create resources. This Gist describes a process whereby a CI/CD pipeline could deploy AppFlow resources without any interaction with a UI or the management console
+AWS AppFlow supports the ability to create a connection profile from the Management Console using a point-and-click approach. However, this approach does not translate well into the world of automated deployments where developers rarely have the ability to even log into the management console of the production environment, let alone create resources. Here, I describe a process whereby a CI/CD pipeline could deploy AppFlow resources without any interaction with a UI or the management console. Only two secrets must be created in AWS secrets manager initally. 
 
 ## Approach
 
