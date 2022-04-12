@@ -15,7 +15,7 @@ aws secretsmanager create-secret --name SalesforceClientCredentials `
 Note down the ARN of the secret thus created.
 
 ### Step 2: Access Token and Refresh Token
-The next step uses the [Web Server OAuth Flow](https://help.salesforce.com/s/articleView?id=sf.remoteaccess_oauth_web_server_flow.htm&type=5) to obtain an access token and refresh token. Note that for this to work, the Connected App must have the `refresh_token`, `offline_access` scopes. The script below needs to be run **locally** and only once. 
+The next step uses the [Web Server OAuth Flow](https://help.salesforce.com/s/articleView?id=sf.remoteaccess_oauth_web_server_flow.htm&type=5) to obtain an access token and refresh token. Note that for this to work, the Connected App must have the `refresh_token`, `offline_access` scopes enabled. The script below needs to be run **locally** and only once. 
 
 Powershell:
 ```PowerShell
@@ -67,5 +67,15 @@ $response = Invoke-RestMethod -Uri "https://<your-sf-domain>.my.salesforce.com/s
 aws secretsmanager create-secret --name "SalesforceCredentials_$(Get-Date -Format yyyy-MM-ddTHHmmss)"  --secret-string "{\`"accessToken\`":\`"$($response.access_token)\`",\`"refreshToken\`":\`"$($response.refresh_token)\`"}" --profile kdp-dev
 ```
 
-After `Step-1` in the script above, the default browser opens and prompts for the username and password associated with the 
+After `Step-1` in the script above, the default browser opens and prompts for the username and password associated with the Salesforce App.
+
+![image](./Step1.png)
+
+Once authenticated, Salesforce redirects you to the Redirect URL specified with the Connected App. The OAuth code is included as a parameter in the redirected URL as seen below
+
+![image](Step1a.png)
+
+Note that the code is URL encoded and must be decoded. The script above also decodes the URL, so the entire code needs to be copied and pasted into the prompt. Next, the script creates a new secret with the access token and refresh token. After this, the CDK/Cloudformation code can be automatically deployed. Note that the above steps need to run exactly once before deploying the cloudformation stack.
+
+
 
